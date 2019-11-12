@@ -63,8 +63,8 @@ function isCollide(a, b) {
 
 // === mouse funcs
 function onMouseMove(evt) {
-    global.mouse.x = evt.clientX / global.stage.w;
-    global.mouse.y = evt.clientY / global.stage.h;
+    global.mouse.x = evt.layerX / global.stage.w;
+    global.mouse.y = evt.layerY / global.stage.h;
 }
 
 function playerMove(player) {
