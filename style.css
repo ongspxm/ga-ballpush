@@ -1,0 +1,1 @@
+.game{background:#ccc;position:relative;overflow:hidden}.game .ball,.game .play,.game .goal{position:absolute;border-radius:50%}.game .ball{background:#c00}.game .play{background:#00c}.game .goal{background:#0c0}
