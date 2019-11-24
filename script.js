@@ -1,139 +1,104 @@
-const global = {
-    stage: {
-        w: 400, h: 300,
-        speed: 0.01, buffer: 1.1
-    },
-    size: {
-        ball: 0.05,
-        goal: 0.02,
-        play: 0.1,
-    },
-    mouse: {
-        x: 0, y:0,
-    }
-};
+const FPS = 60;
+const MAX_FRAME_COUNT = 300;
 
-const game = {
-    state: { done:false, time:0 },
-    ball: { x: 0.8, y: 0.5, s: global.size.ball },
-    play: { x: 0.9, y: 0.5, s: global.size.play },
-    goal: { x: 0.2, y: 0.5, s: global.size.goal },
-};
+const SCORE_GAME_TIME = 1.0;
+const SCORE_BALL_CONTACT = 1.0;
+const SCORE_DIST_BALL_PLAY = 1.0;
+const SCORE_DIST_BALL_GOAL = 1.0;
 
-// === util funcs ===
-// NOTE: y points up, x points right
-// NOTE: angle goes anti-clockwise, starting from east
-function $(css, ele=null) {
-    if (!ele) { ele = document; }
-    return [].slice.call(ele.querySelectorAll(css));
+function fitness(game) {
+    const time = game.state.time;
+
+    return SCORE_DIST_BALL_PLAY * ((game.info.ballDistPlayer/time) * -1)
+        + SCORE_DIST_BALL_GOAL * ((game.info.ballDistGoal/time) * -1)
+        + SCORE_GAME_TIME * ((time/MAX_FRAME_COUNT) * -1)
+        + SCORE_BALL_CONTACT * (game.info.ballContact/time);
 }
 
-function dist(a, b) {
-    return Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2);
+const ga = GA();
+ga.genesis();
+
+let frameId = 0;
+let generationId = 0;
+
+let games = [];
+let chroms = [];
+
+function randomizeLocation() {
+    global.initial.ball.x = Math.random();
+    global.initial.ball.y = Math.random();
+    global.initial.goal.x = Math.random();
+    global.initial.goal.y = Math.random();
+    global.initial.play.x = Math.random();
+    global.initial.play.y = Math.random();
 }
 
-function bearing(a, b) {
-    // NOTE: returns angle of b from a
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const angle = Math.atan(Math.abs(dy/dx));
+function reset() {
+    frameId = 0;
+    generationId += 1;
 
-    if (dy<0) {
-        return (dx>0) ? angle : Math.PI-angle;
-    } else {
-        return (dx<0) ? Math.PI+angle : (2*Math.PI)-angle;
+    // NOTE: if everything can touch, make it swap place
+    const temp = ga.getChromosomes();
+    if (temp[temp.length-1].done) {
+        randomizeLocation();
     }
+
+    ga.populate();
+    chromos = ga.getChromosomes();
+
+    const html = [];
+    const content = '<div class="goal"></div>'
+        + '<div class="play"></div>'
+        + '<div class="ball"></div>';
+
+    games = [];
+    for (let i=0; i<chromos.length; i+=1) {
+        games.push(genGame());
+        html.push(`<div id="game${i}" class="game">${content}</div>`)
+    }
+
+    $('#games')[0].innerHTML = html.join('');
 }
 
-function extend(pt, dist, angle) {
-    // NOTE: given old pt, return new pt
-    const dx = Math.abs(Math.cos(angle)*dist);
-    const dy = Math.abs(Math.sin(angle)*dist);
+let timer;
+function run() {
+    $('#info-frame')[0].innerText = frameId;
+    $('#info-generation')[0].innerText = generationId;
 
-    if (angle<Math.PI/2) { return { x: pt.x+dx, y: pt.y-dy }; }
-    if (angle<Math.PI) { return { x: pt.x-dx, y: pt.y-dy }; }
-    if (angle<Math.PI*3/2) { return { x: pt.x-dx, y: pt.y+dy }; }
-    return { x: pt.x+dx, y: pt.y+dy };
+    if (games.length == 0) { reset(); }
+
+    if (frameId > MAX_FRAME_COUNT) {
+        for (let i=0; i<chromos.length; i+=1) {
+            chromos[i].score = fitness(games[i]);
+            chromos[i].done = games[i].state.done;
+        }
+
+        const mul = 10000;
+        $('#info-score')[0].innerText = chromos.slice(0, 3)
+            .map(x => parseInt(x.score*mul)/mul).join(' ');
+
+        ga.cull();
+        reset();
+    }
+
+    for (let i=0; i<chromos.length; i+=1) {
+        update(games[i], botWrapper(chromos[i].vals),
+            $(`#game${i}`)[0]);
+    }
+
+    frameId += 1;
+    timer = setTimeout(run, 1000/FPS);
 }
 
-function isCollide(a, b) {
-    // NOTE: assumes a, b are points with {x, y}
-    return dist(a, b) < (a.s + b.s)/2;
+const gamePlayer = genGame();
+function runPlayer() {
+    $('#gameP')[0].addEventListener('mousemove', onMouseMove);
+    global.stage.side = 400;
+
+    update(gamePlayer, playerMove);
+    timer = setTimeout(runPlayer, 1000/FPS);
 }
 
-// === mouse funcs
-function onMouseMove(evt) {
-    global.mouse.x = evt.layerX / global.stage.w;
-    global.mouse.y = evt.layerY / global.stage.h;
+function pause() {
+    clearTimeout(timer);
 }
-
-function playerMove(player) {
-    return bearing(player, global.mouse);
-}
-
-// === game funcs
-function update(getMovementAngle) {
-    function draw(ele, info) {
-        ele.style.top = `${(info.y - info.s/2)*100}%`;
-        ele.style.left = `${(info.x - info.s/2)*100}%`;
-
-        ele.style.width = `${info.s*100}%`;
-        ele.style.paddingBottom = `${info.s*100}%`;
-    }
-
-    function checkLimits(x) {
-        return Math.min(1.0, Math.max(x, 0.0));
-    }
-
-    if (game.state.done) { 
-        return game.state.time; 
-    } else {
-        game.state.time += 1;
-    }
-
-    // NOTE: moving player based on algo
-    const pt = extend(game.play, global.stage.speed,
-        getMovementAngle(game.play));
-    game.play.x = pt.x; game.play.y = pt.y;
-
-    // NOTE: kick ball away from player
-    if (isCollide(game.ball, game.play)) {
-        const angle = bearing(game.play, game.ball);
-        const dist = (game.play.s + game.ball.s)/2;
-        const pt = extend(game.play, dist*global.stage.buffer, angle);
-
-        game.ball.x = pt.x;
-        game.ball.y = pt.y;
-    }
-
-    // NOTE: checking bounds
-    game.ball.x = checkLimits(game.ball.x);
-    game.ball.y = checkLimits(game.ball.y);
-    game.ball.x = checkLimits(game.ball.x);
-    game.ball.y = checkLimits(game.ball.y);
-
-    // NOTE: end game if game over
-    if (isCollide(game.ball, game.goal)) {
-        game.state.done = true;
-    }
-
-    // NOTE: drawing everything
-    draw($('.ball')[0], game.ball);
-    draw($('.goal')[0], game.goal);
-    draw($('.play')[0], game.play);
-
-    const stage = $('.game')[0];
-    stage.style.width = global.stage.w + 'px';
-    stage.style.height = global.stage.h + 'px';
-}
-
-window.onload = () => {
-    $('#game1')[0].addEventListener('mousemove', onMouseMove);
-
-    function loop() {
-        update(playerMove);
-        setTimeout(loop, 1000/30);
-    }
-
-    loop();
-};
